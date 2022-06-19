@@ -1,0 +1,72 @@
+#!/usr/bin/env node
+/* global require __dirname */
+const fs = require('fs').promises;
+const sharp = require('sharp');
+const path = require('path');
+const exif = require('exif');
+const dateFormat = require('dateformat');
+const moment = require('moment');
+const { promisify } = require('util');
+
+(async () => {
+	try {
+		await fs.rm(path.join(__dirname, '..', 'src', 'public', 'portfolio'), { recursive: true });
+	} catch {
+		// Ignore
+	}
+
+	await fs.mkdir(path.join(__dirname, '..', 'src', 'public', 'portfolio'));
+
+	const files = await fs.readdir(path.join(__dirname, '..', 'src', 'assets', 'portfolio'));
+	const rootMetadata = [];
+
+	for (let i = 1; i <= files.length; i++) {
+		const file = files[i - 1];
+
+		const originalImageData = await fs.readFile(path.join(__dirname, '..', 'src', 'assets', 'portfolio', file));
+
+		const exifImageMetadata = await promisify(exif)(path.join(__dirname, '..', 'src', 'assets', 'portfolio', file));
+		const basicImageMetadata = await sharp(originalImageData).metadata();
+
+		const previewImageData = await sharp(originalImageData)
+			.resize(Math.ceil(basicImageMetadata.width / 2), Math.ceil(basicImageMetadata.height / 2))
+			.jpeg({ quality: 80 })
+			.toBuffer();
+
+		const fullImageData = await sharp(originalImageData)
+			.jpeg({ quality: 100 })
+			.toBuffer();
+
+		await fs.writeFile(path.join(__dirname, '..', 'src', 'public', 'portfolio', 'preview-' + i + '.jpg'), previewImageData);
+		await fs.writeFile(path.join(__dirname, '..', 'src', 'public', 'portfolio', 'full-' + i + '.jpg'), fullImageData);
+
+		const captureTimestamp = moment(exifImageMetadata.exif.DateTimeOriginal.split(':', 2).join('-')).toDate();
+
+		await fs.writeFile(path.join(__dirname, '..', 'src', 'public', 'portfolio', 'meta-' + i + '.json'), JSON.stringify({
+			captureDate: dateFormat(captureTimestamp, 'mm/dd/yyyy HH:MM:ss'),
+			resolution: [basicImageMetadata.width, basicImageMetadata.height],
+			cameraType: exifImageMetadata.image.Model,
+			lensType: exifImageMetadata.exif.LensModel,
+			isoSpeed: exifImageMetadata.exif.ISO,
+			focalLength: exifImageMetadata.exif.FocalLength,
+			aperture: exifImageMetadata.exif.FNumber,
+			shutterSpeed: exifImageMetadata.exif.ExposureTime,
+			previewImageURL: '/portfolio/preview-' + i + '.jpg',
+			fullImageURL: '/portfolio/full-' + i + '.jpg'
+		}));
+
+		rootMetadata.push({
+			captureDate: dateFormat(captureTimestamp, 'mmmm d, yyyy'),
+			captureTimestamp: new Date(exifImageMetadata.exif.DateTimeOriginal),
+			previewImageURL: '/portfolio/preview-' + i + '.jpg',
+			captureID: i.toString(),
+			resolution: [basicImageMetadata.width, basicImageMetadata.height]
+		});
+
+		console.log('Processed image ' + i + '/' + files.length);
+	}
+
+	rootMetadata.sort((a, b) => a.captureTimestamp > b.captureTimestamp ? 1 : a.captureTimestamp < b.captureTimestamp ? -1 : 0);
+
+	await fs.writeFile(path.join(__dirname, '..', 'src', 'public', 'portfolio', 'meta.json'), JSON.stringify(rootMetadata));
+})();
